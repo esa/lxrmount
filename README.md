@@ -22,7 +22,7 @@ b) terminal program, e.g. minicom -D /dev/ttyACM0 # and then write one or more c
 - `echo STOP: > /dev/ttyACM0` stops motion, but motors kept powered, holding position
 - `echo RELEASE: > /dev/ttyACM0` disconnect motors, no current, equivalent to disconnected cable
 - **do not run axis specific commands before configuring the axes!**
-Basic configuration: `./lxr_init.sh > /dev/ttyACM0`
+Basic configuration: `./lxr_init.sh /dev/ttyACM0`
 - help # (yes, lowercase) is an online help, you can also ask for help to a specific command, e.g. help AP
 
 ### Axis suffixes
