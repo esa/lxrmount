@@ -12,8 +12,8 @@
 ## Manual commanding
 ### Comms I/O
 - how to issue a command:
-a) echo SOME:COMMAND > /dev/ttyACM0 # beware, ttyACM* suffix may vary in case of e.g. disconnecting while in useb) 
-b) terminal program, e.g. minicom -D /dev/ttyACM0 # and then write one or more commands/queries interactively
+  - a) `echo SOME:COMMAND > /dev/ttyACM0` beware, `ttyACM*` suffix may vary in case of e.g. disconnecting while in useb) 
+  - b) terminal program, e.g. `minicom -D /dev/ttyACM0` and then write one or more commands/queries interactively
 - when using terminal, character echo is handy; if disabled by previous program, re-enable:
 `echo 'ECHO:1' > /dev/ttyACM0`
 - case matters, CapsLock is your friend
@@ -27,8 +27,8 @@ Basic configuration: `./lxr_init.sh /dev/ttyACM0`
 
 ### Axis suffixes
 - most of RoCon cmd/query commands need suffix designating axis: A,B,C,...
--- e.g. query position: command is "AP", to query position of axis B: APB?
--- or: set speed of axis A to 100: SPDB:100
+-- e.g. query position: command is "APx", to query position of axis B: `APB?`
+-- or: set speed (command "SPDx") of axis A to 100: `SPDB:100`
 
 ## Homepage and docs
 - https://www.pikron.com/pages/products/motion_control/lx_rocon.html
