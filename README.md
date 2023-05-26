@@ -49,7 +49,7 @@ Basic configuration: `./lxr_init.sh > /dev/ttyACM0`
 # Synta NEQ6, HEQ5
 ## Motor & gear ratios
 - `#define NEQ5_MOTOR_STEPS    50` -- steppers are "1.8deg/step" which means using 4-phase stepping, i.e. 50 waveform periods per revolution
-- `#define NEQ5_GEAR_RATIO    705` -- same value (702:1) for "HEQ5 Syntrek" & "NEQ6 Synscan"
+- `#define NEQ5_GEAR_RATIO    705` -- same value (705:1) for "HEQ5 Syntrek" & "NEQ6 Synscan"
 -- HEQ Syntrek has gear ratio 47/9 and worm ratio 135/1
 -- (N)EQ6 has gear ratio and 47/12 and worm ratio 180/1
 - `#define LXR_USTEPS         200` -- the product `NEQ5_MOTOR_STEPS*NEQ5_GEAR_RATIO*LXR_USTEPS` yields APunit count per axis full circle. In this case *50*705*200 = 7050000 APunits/circle*. This value must be <2^24. I choose value <2^23 so we can do some wrapping without overflow.
