@@ -20,6 +20,7 @@ b) terminal program, e.g. minicom -D /dev/ttyACM0 # and then write one or more c
 - `echo STOP: > /dev/ttyACM0` stops motion, but motors kept powered, holding position
 - `echo RELEASE: > /dev/ttyACM0` disconnect motors, no current, equivalent to disconnected cable
 - **do not run axis specific commands before configuring the axes!**
+Basic configuration: `./lxr_init.sh > /dev/ttyACM0`
 - help # (yes, lowercase) is an online help, you can also ask for help to a specific command, e.g. help AP
 ## Axis suffices
 - most of RoCon cmd/query commands need suffix designating axis: A,B,C,...
@@ -34,7 +35,8 @@ b) terminal program, e.g. minicom -D /dev/ttyACM0 # and then write one or more c
 # SW tools
 ## TrackPV.java
 Calls OreKit to calculate position+velocity vectors over specified time period
-```javac -classpath '/SOME_DIR/orekit/hipparchus-1.8-bin/*:/home/marek/orekit/orekit-10.3.jar' TrackPV.java
+```
+javac -classpath '/SOME_DIR/orekit/hipparchus-1.8-bin/*:/home/marek/orekit/orekit-10.3.jar' TrackPV.java
 java -classpath '/home/marek/orekit/hipparchus-1.8-bin/*:/home/marek/orekit/orekit-10.3.jar:.' TrackPV 2023-05-25T20:00:00 720 > pv_iss_2023-05-25T200000_720.txt
 ```
 ## pv2joint.jl
