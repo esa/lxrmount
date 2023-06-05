@@ -112,6 +112,34 @@ Tracking 2-axis trajectory with RoCon & astro mount. Has been modified to use TC
 - `make lxrmount`
 - `./lxrmount_real rocon.local tracks/h-2a_2023-06-04T214300_600.eq`
 
+## stellio
+`stellio` is a TCP listener, counterpart to _Stellarium Telescope control_ plugin. When "GOTO" command is issued via Stellarium GUI, `stellio` populates a file `goto.txt` with a 1-second, two line segment of HA/DE (Hour Angle and Declination) of the GOTO target at sidereal speed.
+
+**Depends:** libnova-dev
+
+Note: I am not quite sure if the sidereal time handling is correct, also depends on Telescope plugin setting (J2000.0 vs Jnow). For our initial tests we do not care much. Also, there is no calculation of precession/nutation so DE=Dec hard assignment for now. These topics will become hot when performing multi-point, accurate alignment in the future.
+
+# Cookbook
+## Prerequisites
+- attach RoCon to your control computer (EFE use case: RPi) via Ethernet. Test you can ping `rocon.local` (when assigned via DHCP & AVAHI), or 192.168.1.34 (RoCon default IP). In the following I will refer to RoCon's IP or hostname as `rocon.local`. When in doubt, `telnet rocon.local` and it shall respond with `login:`, you may use credentials: rocon/pikron
+- on control PC, build `lxrmount_real` & `lxrmount_fake` using `make`. If you wish to enter coordinates via Stellarium, also `make stellio` on control PC.
+- on trajectory generator PC (EFE use case: `krysolet.go.esa.int` -- already prepared by me), put OreKit libs into `/opt/orekit` and `make TrackPV.class`.
+## How to track celestial target entered via Stellarium
+- run `./stellio` on control PC
+- run Stellarium (on control PC itself, or any PC able to connect via TCP/IP to the control PC)
+- Stellarium -> config -> Plugins -> Telescope control
+  - define new "Telescope", give IP address/hostname of control PC (or `localhost` when running Stellarium on control PC), and TCP port 10000
+  - select an object using mouse, then Telescope -> Current object -> Slew -- at this point `stellio` shall confirm RA/Dec / HA/DE in radians to terminal output, and populate `goto.txt` with the sidereal trajectory
+- `./lxrmount_real rocon.local goto.txt` shall do the tracking
+- now you can manually center the object in a telescope or Sun in an antenna according to spectrum analyser noise to perform single-point alignment. The alignment is not lost until RoCon is power-cycled. It is safe to interrupt or even reboot control PC meanwhile.
+## Satellite tracking
+- search for suitable pass e.g. via Predict or heavens-above.com => note start time (beware of UTC!) and duration
+- if satellite not yet present in `tle.txt`, or TLEs are obsolete, append/update the TLE in `tle.txt` on trajectory generator PC
+- on trajectory generator PC: `./calc.sh sat_id 2023-06-04T21:43:00 600 > tracks/somefile.ab` -- 2023-06-04T21:43:00 is trajectory start **(UTC time!)** and 600 is duration in [s]
+- copy (scp) `tracks/somefile.ab` to the control PC
+- simulated-time run: `./lxrmount_fake rocon.local tracks/somefile.ab`
+- real-time run: `./lxrmount_fake rocon.local tracks/somefile.ab`
+
 # Authors
 - this pile of scripts and programs: Marek Peca
 - LX RoCon and unerlying PXMC motion control infrastructure: Pavel Pisa
