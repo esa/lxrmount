@@ -12,6 +12,12 @@
 #include <signal.h>
 #include <errno.h>
 
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
 #include <sys/time.h>
 #include <time.h>
 
@@ -22,6 +28,7 @@
 #define NEQ5_GEAR_RATIO    705
 #define LXR_USTEPS         200 /* 50*705*200 ~~ <2^23 */
 #define MAX_V             3000
+#define MAX_V_GOTO        3000
 
 #define TS_GE(a,b) (((a)->tv_sec == (b)->tv_sec) \
   ? ((a)->tv_nsec >= (b)->tv_nsec) \
@@ -63,6 +70,9 @@ typedef struct mount_t {
   double a_off, b_off;
   /* controller state */
   double s1, s2;
+  /* joystick */
+  double js_v1, js_v2;
+  unsigned js_cmd;
 } mount_t;
 
 typedef struct traj_t {
@@ -91,8 +101,9 @@ void angle2str(char *s, double phi) {
   sprintf(s, "%3u°%02u'%05.2f", d, m, a);
 }
 
-#if 0
-void js_control(mount_t *mount) {
+#ifdef JOY
+void *js_control(void *arg) {
+  mount_t *mount = (mount_t*)arg;
   double jvx, jvy;
   char *dev = "/dev/input/js0";
   int fd;
@@ -101,48 +112,28 @@ void js_control(mount_t *mount) {
   struct js_event js;
 
   if ((fd = open(dev, O_RDONLY)) < 0) {
-    perror("open");
-    return;
+    perror("joy: open");
+    return NULL;
   }
+  fprintf(stderr, "=*= joystick OK =*=\n");
   ioctl(fd, JSIOCGAXES, &n_axes);
   for (;;) {
     if (read(fd, &js, sizeof(js)) != sizeof(js)) {
-      perror("read");
-      return;
+      perror("joy: read");
+      return NULL;
     }
     if ((js.type & ~JS_EVENT_INIT) == JS_EVENT_AXIS) {
       //fprintf(stderr, "***** %u : %d\n", js.number, js.value);
       axis[js.number] = js.value;
       float gain = (32767.0 - (float)axis[3])/(2*32767.0);
-      jvx = (V_MAX/32768.0)*axis[0]*gain;
-      jvy = (V_MAX/32768.0)*axis[1]*gain;
-
-      /* * */
-      jvx *= CTRL_PERIOD*(2*M_PI)/IRC_PERIOD_RA;
-      jvy *= CTRL_PERIOD*(2*M_PI)/IRC_PERIOD_DEC;
+      jvx = (1.0/32768.0)*axis[0]*gain;
+      jvy = (1.0/32768.0)*axis[1]*gain;
       mount->js_v1 = jvx;
       mount->js_v2 = jvy;
     }
     if ((js.type == JS_EVENT_BUTTON) && js.value) {
-      fprintf(stderr, "*>* %u\n", js.number);
-      switch (js.number) {
-      case 0:
-	mount->cmd_goto = 0;
-	break;
-      case 1:
-	mount->cmd_goto = 1;
-	break;
-      case 10:
-	mount->cmd_save_point = 1;
-	break;
-	/*
-      case 11:
-	mount->cmd_calibrate = 1;
-	break;
-	*/
-      default:
-	break;
-      }
+      fprintf(stderr, "*>* %u\n", 1+js.number);
+      mount->js_cmd = 1+js.number;
     }
   }
 }
@@ -181,14 +172,18 @@ int read_ab_trajectory_line(traj_t *tr, struct timespec *t, double *a, double *b
   unsigned long long sec;
   char sec_frac[16], *p;
   double sa, sb;
-  //int n = sscanf(s, "%llu.%12s%lf%lf", &sec, sec_frac, &sa, &sb);
-  //if (n != 4) {
-  int n = sscanf(s, "%lf%lf", &sa, &sb);
-  if (n != 2) {
+  int n = sscanf(s, "%llu.%12s%lf%lf", &sec, sec_frac, &sa, &sb);
+  if (n != 4) {
+  //int n = sscanf(s, "%lf%lf", &sa, &sb);
+  //if (n != 2) {
+    fprintf(stderr, "### T:EOF ###\n");
     tr->eof = 1;
     return -1;
   }
-  /*
+
+#ifndef FAKETIME
+#pragma message("-- compiling for REAL time --")
+  /* real time */
   t->tv_sec = sec;
   for (p = sec_frac; *p; p++);
   for ( ; p - sec_frac != 9; p++) {
@@ -196,12 +191,15 @@ int read_ab_trajectory_line(traj_t *tr, struct timespec *t, double *a, double *b
   }
   *p = '\0';
   t->tv_nsec = atoll(sec_frac);
-  */
+#else
+#pragma message("-- compiling for FAKE time --")
+  /* fake time */
   t->tv_sec = tr->line_no;
   t->tv_nsec = 0;
   struct timespec tmp;
   TS_ADD(&tmp, t, &local_t0); //debug
   *t = tmp;
+#endif
 
   *a = sa;
   *b = sb;
@@ -267,15 +265,16 @@ double ctrl(double xe, double vw, double *s) {
   //v = vw + 0.25*(25.0 /*Hz*/)*xe;
   //v = vw + 0.25*xe * (0.1 /* T_s [s] */) * 0.5; //***Pysvejc:(***
 
-  //*s += 0.0004*xe;
   *s += 0.0004*xe;
+  //*s += 0.00001*xe;
   if (*s > MAX_V) {
     *s = MAX_V;
   }
   else if (*s < -MAX_V) {
     *s = -MAX_V;
   }
-  v = (*s) + vw * 0.1 + 0.25*xe * 0.1 /* T_s [s] */;
+  //v = (*s) + vw * 0.1 + 0.25*xe * 0.1 /* T_s [s] */;
+  v = (*s) + (vw + 0.25*xe*0.1/* T_s [s] */)/15.625;
   
   if (v > MAX_V)
     return MAX_V;
@@ -294,11 +293,11 @@ void get_position(mount_t *m) {
   clock_gettime(CLOCK_REALTIME, &mt->t);
 
   fgets(s, sizeof(s), m->pxmc);  fprintf(stderr, "p> %s", s);
-  sscanf(s, "APA=%d", &xi);
+  while (sscanf(s, "APA=%d", &xi) != 1);
   mt->x1 = xi * ustep2rad;
 
   fgets(s, sizeof(s), m->pxmc);  fprintf(stderr, "p> %s", s);
-  sscanf(s, "APB=%d", &xi);
+  while (sscanf(s, "APB=%d", &xi) != 1);
   mt->x2 = xi * ustep2rad;
 
   fprintf(stderr, "= %+9.4f\t%+9.4f\n",
@@ -311,11 +310,17 @@ void motion_step(mount_t *m) {
   double x, e;
   int xi, dx, v1, v2;
 
+#ifdef JOY
+  e = m->a_off + mt->xw1 - mt->x1; //circle_dist(IRC_PERIOD_RA, mt->xw1, mt->x1);
+  v1 = (int)(0.5 + ctrl(e * rad2ustep, mt->vw1 * rad2ustep, &m->s1));
+  e = m->b_off + mt->xw2 - mt->x2; //circle_dist(IRC_PERIOD_DEC, mt->xw2, mt->x2);
+  v2 = (int)(0.5 + ctrl(e * rad2ustep, mt->vw2 * rad2ustep, &m->s2));
+#else
   e = mt->xw1 - mt->x1; //circle_dist(IRC_PERIOD_RA, mt->xw1, mt->x1);
   v1 = (int)(0.5 + ctrl(e * rad2ustep, mt->vw1 * rad2ustep, &m->s1));
   e = mt->xw2 - mt->x2; //circle_dist(IRC_PERIOD_DEC, mt->xw2, mt->x2);
   v2 = (int)(0.5 + ctrl(e * rad2ustep, mt->vw2 * rad2ustep, &m->s2));
-
+#endif
   //v1 = v2 = 0;
   
   fprintf(m->pxmc, "SPDA:%d\nSPDB:%d\nAPA?\nAPB?\n", v1, v2);
@@ -341,9 +346,14 @@ int motion_goto(mount_t *m) {
   motion_t *mt = &m->motion;
   char s[80];
   int x1, x2, flag = 0;
+#ifdef JOY
+  x1 = (int)(0.5 + rad2ustep * mt->xw1 + m->a_off);
+  x2 = (int)(0.5 + rad2ustep * mt->xw2 + m->b_off);
+#else
   x1 = (int)(0.5 + rad2ustep * mt->xw1);
   x2 = (int)(0.5 + rad2ustep * mt->xw2);
-  fprintf(m->pxmc, "GA:%d\nGb:%d\nRA:\nRB:\n", x1, x2);
+#endif
+  fprintf(m->pxmc, "GA:%d\nGB:%d\nRA:\nRB:\n", x1, x2);
   fprintf(stderr, "GA:%d GB:%d RA: RB:\n", x1, x2);
   fflush(m->pxmc);
   do {
@@ -358,29 +368,97 @@ int motion_goto(mount_t *m) {
       flag |= 0x2;
     }
     else {
-      return -1;
+      //return -1;
     }
   } while (flag != 0x3);
   get_position(m);
   return 0;
 }
 
+void *get_in_addr(struct sockaddr *sa) {
+  if (sa->sa_family == AF_INET) {
+    return &(((struct sockaddr_in*)sa)->sin_addr);
+  }
+  return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+int reply(FILE *f, const char *challenge, const char *response) {
+  char s[64];
+  for (;;) {
+    if (!fgets(s, sizeof(s), f)) {
+      return -1;
+    }
+    if (strncmp(challenge, s, strlen(challenge)) == 0) {
+      fprintf(stderr, "=> %s", s);
+      break;
+    }
+    fprintf(stderr, "?!> |%s|", s);
+  }
+  fprintf(f, "%s\n", response);
+  fflush(f);
+  return 0;
+}
+
 int mount_connect(mount_t *m, const char *dev_name) {
+  /*
   int fd = open(dev_name, O_RDWR | O_SYNC);
   if (fd == -1) {
     return -1;
   }
   m->pxmc = fdopen(fd, "a+");
+  */
+  int sockfd;  
+  struct addrinfo hints, *servinfo, *p;
+  int rv;
+  char s[INET6_ADDRSTRLEN];
+
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  if ((rv = getaddrinfo(dev_name, "23", &hints, &servinfo)) != 0) {
+    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+    return 1;
+  }
+  // loop through all the results and connect to the first we can
+  for(p = servinfo; p != NULL; p = p->ai_next) {
+    if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                         p->ai_protocol)) == -1) {
+      perror("client: socket");
+      continue;
+    }
+    if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+      close(sockfd);
+      perror("client: connect");
+      continue;
+    }
+    break;
+  }
+  if (p == NULL) {
+    fprintf(stderr, "client: failed to connect\n");
+    return 2;
+  }
+  inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
+            s, sizeof s);
+  fprintf(stderr, "client: connecting to %s\n", s);
+  freeaddrinfo(servinfo);
+  
+  m->pxmc = fdopen(sockfd, "a+");
   if (!m->pxmc) {
     return -1;
   }
+  if (reply(m->pxmc, "login:", "rocon") ||
+      reply(m->pxmc, "password:", "pikron") ||
+      reply(m->pxmc, "\r#ROCON", "ECHO:0")) {
+    return -1;
+  }
+  
   fprintf(m->pxmc,
 	  "ECHO:0\n"
 	  "RELEASE:\n"
 	  "REGMODEA:8\n"
 	  "REGMODEB:8\n"
-	  "REGMODEC:4\n"
-	  "REGMODED:4\n"
+	  "REGMODEC:8\n"
 	  "REGOUTMAP:\n"
 
 	  "REGCURDPA:150\n"
@@ -414,7 +492,7 @@ int mount_connect(mount_t *m, const char *dev_name) {
 	  "PWMB:0\n"
 	  "REGACCB:1\n"
 	  "SPDB:0\n",
-	  MAX_V, LXR_USTEPS, MAX_V, LXR_USTEPS
+	  MAX_V_GOTO, LXR_USTEPS, MAX_V_GOTO, LXR_USTEPS
 	  );
   // REGMEx ~ 1/supply voltage, REGMSx, REGPTIRCx ~ LXR_USTEPS
   fflush(m->pxmc);
@@ -423,7 +501,7 @@ int mount_connect(mount_t *m, const char *dev_name) {
 
 int mount_close(mount_t *m) {
   fprintf(m->pxmc,
-	  "SPDA:0:\n"
+	  "SPDA:0\n"
 	  "SPDB:0\n");
   fflush(m->pxmc);
   fclose(m->pxmc);
@@ -432,17 +510,16 @@ int mount_close(mount_t *m) {
 		  
 static mount_t *_mount = NULL;
 
-void shutdown() {
+void shutdown_exit() {
   mount_t *m = _mount;
-  if (m /* && m->pxmc */) {
-    mount_close(m);
+  if (m && m->pxmc) {
     m->finish = 1;
   }
   fprintf(stderr, "== SHUTDOWN ==\n");
 }
 
 void shutdown_sig(int sig_no) {
-  shutdown();
+  shutdown_exit();
 }
 
 int main(int argc, char *argv[]) {
@@ -455,19 +532,20 @@ int main(int argc, char *argv[]) {
     .finish = 0,
     .a_off = 0.0, .b_off = 0.0,
     .s1 = 0.0, .s2 = 0.0,
+    .js_v1 = 0.0, .js_v2 = 0.0, .js_cmd = 0,
   };
   traj_t tr;
-  pthread_t motor_th, socket_th;
+  pthread_t joy_th, socket_th;
 
   _mount = &mount;
-  atexit(shutdown);
+  atexit(shutdown_exit);
   struct sigaction sig_act;
   sig_act.sa_handler = shutdown_sig;
   sigemptyset(&sig_act.sa_mask);
   sig_act.sa_flags = 0;
   sigaction(SIGINT,  &sig_act, NULL);
   sigaction(SIGTERM, &sig_act, NULL);
-  sigaction(SIGQUIT, &sig_act, NULL);
+  //sigaction(SIGQUIT, &sig_act, NULL);
   sigaction(SIGHUP,  &sig_act, NULL);
 
   /*
@@ -484,9 +562,11 @@ int main(int argc, char *argv[]) {
     return -1;
   }
   fprintf(mount.points_file, "\n");
-  //pthread_create(&motor_th, NULL, motor_thread, &mount);
-  //js_control(&mount);
 
+#ifdef JOY
+  pthread_create(&joy_th, NULL, js_control, &mount);
+#endif
+ 
   load_abs_offset("mountab.off", &mount.a_off, &mount.b_off);		
   mount_connect(&mount, argv[1]);
 
@@ -523,7 +603,13 @@ int main(int argc, char *argv[]) {
     printf("%+9.4f\t%+9.4f\t%+9.4f\t%+9.4f\n",
 	   rad2deg*mount.motion.xw1, rad2deg*(mount.motion.x1 - mount.motion.xw1),
 	   rad2deg*mount.motion.xw2, rad2deg*(mount.motion.x2 - mount.motion.xw2));
+    //rad2deg*mount.a_off, rad2deg*mount.b_off);
     fflush(stdout);
+
+#ifdef JOY
+    mount.a_off += (0.2*M_PI/180.0)*mount.js_v1; /* 2deg/s max */
+    mount.b_off += (0.2*M_PI/180.0)*mount.js_v2;
+#endif
   }
   mount_close(&mount);
   fprintf(stderr, "Exit.\n");
