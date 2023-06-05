@@ -7,9 +7,9 @@ Vec3 = SArray{Tuple{3},Float64,1,3}
 
 #pv=readdlm("pv_wcube_2023-03-09T145829_720.txt", skipstart=1)
 #pv=readdlm("pv_wcube_2023-03-12T011236_720.txt", skipstart=1)
-pv=readdlm("pv_iss_2023-05-25T200000_720.txt", skipstart=1)
+#pv=readdlm("pv_iss_2023-05-25T200000_720.txt", skipstart=1)
 
-t=pv[:,1];p=pv[:,2:4];v=pv[:,5:7];
+#t=pv[:,1];p=pv[:,2:4];v=pv[:,5:7];
 
 #clf();plot(sqrt.(sum(p.^2, dims=2))*1e-3);grid(true);
 #clf();plot(p*1e-3);grid(true);
@@ -34,9 +34,9 @@ end
 
 
 #Az_mnt=0.0; El_mnt=pi/2;
-Az_mnt=float(0); El_mnt=-52.1868056*(pi/180) # mlyn Lange Voort, Oe, NL
+Az_mnt=float(0); El_mnt=52.1868056*(pi/180) # mlyn Lange Voort, Oe, NL
 
-Tmnt2wrld = Rx(pi/2-El_mnt)*Rz(Az_mnt)
+Tmnt2wrld = Rx(El_mnt - pi/2)*Rz(Az_mnt)
 
 N=length(t)
 th=zeros(N,2)
@@ -45,5 +45,4 @@ for k=1:N
     th[k,:] = topo2azel_p(Twrld2mnt * p[k,:])
 end
 
-
-clf();plot(diff(unwrap(th,dims=1),dims=1)*180/pi)
+#clf();plot(diff(unwrap(th,dims=1),dims=1)*180/pi)
