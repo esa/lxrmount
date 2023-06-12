@@ -255,27 +255,15 @@ double circle_dist(double length, double a, double b) {
   return (d < 0.0) ? (d + length) : (d - length);
 }
 
-/*
- * xe: dilky
- * vw: dilky/periodu
- */
 double ctrl(double xe, double vw, double *s) {
-  /* xe = xw - x */
+  /*
+    xe = xw - x
+    xe [APunit], vw [APunit/s]
+  */
+  const double T_s = 0.1; /* [s] */
   double v;
-  //v = vw + 0.25*(25.0 /*Hz*/)*xe;
-  //v = vw + 0.25*xe * (0.1 /* T_s [s] */) * 0.5; //***Pysvejc:(***
+  v = (vw + 0.25*xe/T_s)/15.625;
 
-  *s += 0.0004*xe;
-  //*s += 0.00001*xe;
-  if (*s > MAX_V) {
-    *s = MAX_V;
-  }
-  else if (*s < -MAX_V) {
-    *s = -MAX_V;
-  }
-  //v = (*s) + vw * 0.1 + 0.25*xe * 0.1 /* T_s [s] */;
-  v = (*s) + (vw + 0.25*xe*0.1/* T_s [s] */)/15.625;
-  
   if (v > MAX_V)
     return MAX_V;
   if (v < -MAX_V)
