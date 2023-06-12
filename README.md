@@ -1,5 +1,11 @@
 # LX RoCon -- tracking satellites and celestial objects
 
+## Why
+- some mounts such as our and popular Synta (SkyWatcher) HEQ5, (N)EQ6 Syntrack/SynScan do have reasonable gears and stepper motors capable to reach satellite tracking speeds (3--4deg/s in default factory slewing speed), however they are **impaired by a totally stupid** PIC stepper driving firmware, not allowing to smoothly adapt speed without interruption
+  - there are other mounts not having this problem, yes, but:
+- ...it may be handy to just have a generic code base able to track sats with a mount + two stepper motors, no absolute encoders, no feedback
+- so we decided to take the industrial quality PiKRON RoCon controller and attached it to the COTS mount. First successful satellite tracked visually was H-2A at 2023-06-04T21:43:00 via Rubinar 500mm f/5.6 + 25mm eyepiece.
+
 ## Setup
 - PiKRON LX RoCon, 2 axes in use, mode=8 (stepper motor without IRC)
 - Synta (branded SkyWatcher) NEQ6 mount (kinematic equivalent of HEQ5)
@@ -17,6 +23,7 @@
 - when using terminal, character echo is handy; if disabled by previous program, re-enable:
 `echo 'ECHO:1' > /dev/ttyACM0`
 - case matters, CapsLock is your friend
+- note: USB is not officially supported for real operation, use RS232 or Ethernet&TCP/IP instead. For the real operation we use `lxrmount` via TCP/IP.
 
 ### Survival
 - `echo STOP: > /dev/ttyACM0` stops motion, but motors kept powered, holding position
@@ -34,6 +41,7 @@ Basic configuration: `./lxr_init.sh /dev/ttyACM0`
 - https://www.pikron.com/pages/products/motion_control/lx_rocon.html
 - https://gitlab.com/pikron/projects/lx_cpu/lx-rocon
 - similar command set to earlier model MARS-8: http://cmp.felk.cvut.cz/~pisa/mars8/mars8_man_cz.html
+  - English manual of even older unit, yet with mostly the same command semantics: https://cmp.felk.cvut.cz/~pisa/mars/mars_man_en.html
 
 ## Misc
 ### Position units
@@ -68,8 +76,21 @@ Basic configuration: `./lxr_init.sh /dev/ttyACM0`
 ## TrackPV.java
 Calls OreKit to calculate position+velocity vectors over specified time period
 ```
-javac -classpath '/SOME_DIR/orekit/hipparchus-1.8-bin/*:/home/marek/orekit/orekit-10.3.jar' TrackPV.java
-java -classpath '/home/marek/orekit/hipparchus-1.8-bin/*:/home/marek/orekit/orekit-10.3.jar:.' TrackPV 2023-05-25T20:00:00 720 > pv_iss_2023-05-25T200000_720.txt
+javac -classpath '/opt/orekit/hipparchus-1.8-bin/*:/opt/orekit/orekit-10.3.jar' TrackPV.java
+java -classpath '/opt/orekit/hipparchus-1.8-bin/*:/opt/orekit/orekit-10.3.jar:.' TrackPV 2023-05-25T20:00:00 720 > pv_iss_2023-05-25T200000_720.txt
+```
+TrackPV has been upgraded with a simple trigonometric calculation, allowing to transform the topocentric coordinate vector (XYZ position) to Az/El or Equatorial (HA/DE, meaning Hour Angle and Declination) angular coordinates. By default the Equatorial (HA/DE) is hard-coded.
+
+For convenience, the TrackPV may be called via `calc.sh` allowing simple search for the TLE in `tle.txt` satellite element catalogue. Usage:
+```
+./calc.sh h-2a 2023-06-04T21:43:00 600 > tracks/h-2a_2023-06-04T214300_600.eq
+```
+`calc.sh` accepts a satellite id as the first argument. Either a string to be matched, or SATCAT/NORAD ID. So e.g. "H-2A" or "38341" are both valid identifiers.
+**Depends on OreKit** and related libs in `/opt/orekit`:
+```
+hipparchus-1.8-bin
+orekit-10.3.jar
+orekit-data
 ```
 ## pv2joint.jl
 Translates XYZ position vector to mount axes (topocentric frame with possibly tilted "a" axis)
@@ -77,8 +98,49 @@ Translates XYZ position vector to mount axes (topocentric frame with possibly ti
 julia> include("pv2joint.jl")
 julia> writedlm("pv_iss_2023-05-25T200000_720.ab", th);
 ```
+Abandoned in favour of `TrackPV.java`.
 
 ## lxrmount
-Tracking 2-axis trajectory with RoCon & astro mount
-- `gcc -ggdb -Wall -Wno-unused-variable -O -o lxrmount lxrmount.c -lm`
-- `./lxrmount /dev/ttyACM0 pv_iss_2023-05-25T200000_720.ab`
+Tracking 2-axis trajectory with RoCon & astro mount. Has been modified to use TCP/IP instead of USB to command RoCon. Two versions exist:
+- `lxrmount_real` -- tracking in real-time based on local Linux `CLOCK_REALTIME`. (Beware of extrapolation when running far from the interval covered by track file)
+- `lxrmount_fake` -- tracking in simulated time, meaning the instant of launching to be coincident with first line of the track file
+
+### Safety and interruption
+- `Ctrl-C` (SIGINT) = exit, but stop the motors (`SPDx:0`) before exiting
+- `Ctrl-\` (SIGQUIT) = hard quit, when e.g. the connection to RoCon is broken and stopping the motors may not be successful
+
+- `make lxrmount`
+- `./lxrmount_real rocon.local tracks/h-2a_2023-06-04T214300_600.eq`
+
+## stellio
+`stellio` is a TCP listener, counterpart to _Stellarium Telescope control_ plugin. When "GOTO" command is issued via Stellarium GUI, `stellio` populates a file `goto.txt` with a 1-second, two line segment of HA/DE (Hour Angle and Declination) of the GOTO target at sidereal speed.
+
+**Depends:** libnova-dev
+
+Note: I am not quite sure if the sidereal time handling is correct, also depends on Telescope plugin setting (J2000.0 vs Jnow). For our initial tests we do not care much. Also, there is no calculation of precession/nutation so DE=Dec hard assignment for now. These topics will become hot when performing multi-point, accurate alignment in the future.
+
+# Cookbook
+## Prerequisites
+- attach RoCon to your control computer (EFE use case: RPi) via Ethernet. Test you can ping `rocon.local` (when assigned via DHCP & AVAHI), or 192.168.1.34 (RoCon default IP). In the following I will refer to RoCon's IP or hostname as `rocon.local`. When in doubt, `telnet rocon.local` and it shall respond with `login:`, you may use credentials: rocon/pikron
+- on control PC, build `lxrmount_real` & `lxrmount_fake` using `make`. If you wish to enter coordinates via Stellarium, also `make stellio` on control PC.
+- on trajectory generator PC (EFE use case: `krysolet.go.esa.int` -- already prepared by me), put OreKit libs into `/opt/orekit` and `make TrackPV.class`.
+## How to track celestial target entered via Stellarium
+- run `./stellio` on control PC
+- run Stellarium (on control PC itself, or any PC able to connect via TCP/IP to the control PC)
+- Stellarium -> config -> Plugins -> Telescope control
+  - define new "Telescope", give IP address/hostname of control PC (or `localhost` when running Stellarium on control PC), and TCP port 10000
+  - select an object using mouse, then Telescope -> Current object -> Slew -- at this point `stellio` shall confirm RA/Dec / HA/DE in radians to terminal output, and populate `goto.txt` with the sidereal trajectory
+- `./lxrmount_real rocon.local goto.txt` shall do the tracking
+- now you can manually center the object in a telescope or Sun in an antenna according to spectrum analyser noise to perform single-point alignment. The alignment is not lost until RoCon is power-cycled. It is safe to interrupt or even reboot control PC meanwhile.
+## Satellite tracking
+- search for suitable pass e.g. via Predict or heavens-above.com => note start time (beware of UTC!) and duration
+- if satellite not yet present in `tle.txt`, or TLEs are obsolete, append/update the TLE in `tle.txt` on trajectory generator PC
+- on trajectory generator PC: `./calc.sh sat_id 2023-06-04T21:43:00 600 > tracks/somefile.ab` -- 2023-06-04T21:43:00 is trajectory start **(UTC time!)** and 600 is duration in [s]
+- copy (scp) `tracks/somefile.ab` to the control PC
+- simulated-time run: `./lxrmount_fake rocon.local tracks/somefile.ab`
+- real-time run: `./lxrmount_fake rocon.local tracks/somefile.ab`
+
+# Authors
+- this pile of scripts and programs: Marek Peca
+- LX RoCon and unerlying PXMC motion control infrastructure: Pavel Pisa
+- first testers and users for W/E-band antenna satellite tracking: Vaclav Valenta and Hugo Deberge
