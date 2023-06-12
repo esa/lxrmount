@@ -3,9 +3,9 @@
 
 tle_file=tle.txt
 
-if grep -qi ^$1 $tle_file; then
-    tle1=$(grep -i -A2 ^$1 $tle_file | tail -2 | head -1)
-    tle2=$(grep -i -A2 ^$1 $tle_file | tail -1)
+if grep -qi "^$1" $tle_file; then
+    tle1=$(grep -i -A2 "^$1" $tle_file | tail -2 | head -1)
+    tle2=$(grep -i -A2 "^$1" $tle_file | tail -1)
 else
     if grep -qi "^1 $1" $tle_file; then
 	tle1=$(grep -i -A1 "^1 $1" $tle_file | tail -2 | head -1)
